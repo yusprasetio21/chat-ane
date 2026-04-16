@@ -1211,7 +1211,7 @@
         }
 
         // =====================================================
-        // SUPABASE INIT - FIX OAUTH REDIRECT ISSUE
+        // SUPABASE INIT
         // =====================================================
         async function initSupabase() {
             try {
@@ -1237,7 +1237,7 @@
         }
 
         // =====================================================
-        // GOOGLE SIGN-IN - FIX REDIRECT
+        // GOOGLE SIGN-IN
         // =====================================================
         async function signInWithGoogle() {
             if (!supabaseClient) return;
@@ -1249,10 +1249,7 @@
             }
 
             try {
-                // Gunakan window.location.origin saja (tanpa pathname)
-                // Ini penting agar redirect kembali ke root domain
                 const redirectTo = window.location.origin;
-
                 console.log('[Auth] Redirect to:', redirectTo);
 
                 const { error } = await supabaseClient.auth.signInWithOAuth({
@@ -1264,7 +1261,6 @@
                 });
 
                 if (error) throw error;
-                console.log('[Auth] Redirecting to Google...');
             } catch(e) {
                 console.error('[Auth] Error:', e);
                 showToast('Login gagal: ' + e.message, 'error');
@@ -1278,22 +1274,17 @@
         }
 
         // =====================================================
-        // CHECK AUTH - FIX SESSION PERSISTENCE
+        // CHECK AUTH
         // =====================================================
         async function checkAuth() {
             console.log('[Auth] Checking session...');
 
             try {
-                // CRITICAL: Tunggu sebentar jika ada hash di URL (callback dari Google)
                 const hash = window.location.hash;
                 if (hash && hash.includes('access_token')) {
                     console.log('[Auth] Detected OAuth callback, waiting...');
                     showLoading('Menyelesaikan login...');
-                    
-                    // Tunggu Supabase memproses callback
                     await new Promise(r => setTimeout(r, 1500));
-
-                    // Bersihkan URL
                     window.history.replaceState(null, '', window.location.pathname);
                 }
 
@@ -1306,7 +1297,6 @@
                 const statusText = document.getElementById('statusText');
 
                 if (session?.user) {
-                    // === LOGGED IN ===
                     currentUser = session.user;
                     console.log('[Auth] Logged in:', currentUser.email);
 
@@ -1335,15 +1325,12 @@
                     statusDot.className = 'status-dot online';
                     statusText.textContent = 'Online';
 
-                    // Show UI elements
                     document.getElementById('chatModeSection').style.display = 'flex';
                     document.getElementById('deleteAllBtn').style.display = 'flex';
                     document.getElementById('inputArea').style.display = 'block';
 
-                    // Apply current mode
                     applyUIMode(currentUIMode);
 
-                    // Load projects if in project mode
                     if (currentUIMode === 'project') {
                         await loadProjects();
                     }
@@ -1351,7 +1338,6 @@
                     updateWelcome(true);
 
                 } else {
-                    // === NOT LOGGED IN ===
                     currentUser = null;
                     renderLoginButton();
 
@@ -1410,7 +1396,6 @@
                 badge.className = 'mode-badge quick';
                 badge.textContent = 'Quick Chat';
                 
-                // Reset project selection
                 currentProject = null;
                 currentSession = null;
                 document.getElementById('currentChatTitle').textContent = 'Asisten-Ane - Quick Chat';
@@ -1496,7 +1481,7 @@
         }
 
         // =====================================================
-        // RENDER PROJECTS WITH FOLDER ICONS
+        // RENDER PROJECTS
         // =====================================================
         function renderProjects() {
             const container = document.getElementById('projectsList');
@@ -1728,7 +1713,7 @@
         }
 
         // =====================================================
-        // SEND MESSAGE
+        // SEND MESSAGE - DIPERBAIKI!
         // =====================================================
         async function sendMessage() {
             const input = document.getElementById('messageInput');
@@ -1746,18 +1731,47 @@
             addLoading();
 
             try {
+                // ========== AMBIL ACCESS TOKEN DARI SESSION ==========
+                const { data: { session } } = await supabaseClient.auth.getSession();
+                const token = session?.access_token;
+
+                if (!token) {
+                    throw new Error('Token tidak ditemukan. Silakan login ulang.');
+                }
+
                 const projectId = currentProject ? currentProject.id : null;
+                const isGuestMode = (currentUIMode === 'quick');
+                
+                // Buat payload sesuai mode
+                const payload = {
+                    message: msg,
+                    session_id: currentSession,
+                    stream: true
+                };
+                
+                if (!isGuestMode && projectId) {
+                    payload.project_id = projectId;
+                }
+                
+                if (isGuestMode) {
+                    payload.guest_mode = true;
+                }
+
+                console.log('[Chat] Sending request with token...');
+                
                 const res = await fetch(`${SUPABASE_URL}/functions/v1/chat-ane`, {
                     method: 'POST',
                     headers: {
-                        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-                        'apikey': SUPABASE_ANON_KEY,
+                        'Authorization': `Bearer ${token}`,  // ← PAKAI ACCESS TOKEN!
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ message: msg, project_id: projectId, session_id: currentSession, stream: true })
+                    body: JSON.stringify(payload)
                 });
 
-                if (!res.ok) throw new Error('API Error: ' + res.status);
+                if (!res.ok) {
+                    const errText = await res.text();
+                    throw new Error(`API Error ${res.status}: ${errText}`);
+                }
 
                 const reader = res.body.getReader();
                 const decoder = new TextDecoder();
@@ -1783,7 +1797,7 @@
                     });
                 }
 
-                if (currentProject) await loadProjects();
+                if (currentProject && !isGuestMode) await loadProjects();
 
             } catch(e) {
                 console.error('[Chat]', e);
@@ -1833,32 +1847,26 @@
         document.addEventListener('keydown', e => { if (e.key==='Escape') closeModal(); });
 
         // =====================================================
-        // INITIALIZATION - FIX OAUTH FLOW
+        // INITIALIZATION
         // =====================================================
         async function init() {
             console.log('[Init] Starting...');
 
-            // Theme
             if (localStorage.getItem('theme')==='dark') document.body.classList.add('dark');
             updateThemeIcon();
 
-            // Init Supabase
             const ok = await initSupabase();
             if (!ok) { hideLoading(); renderLoginButton(); return; }
 
-            // Check auth (handles OAuth callback automatically)
             await checkAuth();
 
-            // Listen for auth changes
             supabaseClient.auth.onAuthStateChange((event, session) => {
                 console.log('[Auth] Event:', event);
                 if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
-                    // Delay reload to ensure session is processed
                     setTimeout(() => window.location.reload(), 800);
                 }
             });
 
-            // Textarea setup
             const ta = document.getElementById('messageInput');
             ta.addEventListener('input', function() {
                 this.style.height='auto';
