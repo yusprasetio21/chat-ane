@@ -71,7 +71,12 @@
                 </button>
             </div>
 
-            <!-- Projects List -->
+            <!-- Quick Chat History List (shown in quick mode) -->
+            <div class="projects-list" id="quickChatHistory" style="display:none;">
+                <div class="section-divider">Riwayat Chat</div>
+            </div>
+
+            <!-- Projects List (shown in project mode) -->
             <div class="projects-list" id="projectsList" style="display:none;">
                 <div class="section-divider">Projects</div>
             </div>
@@ -110,7 +115,7 @@
                             <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
                         </svg>
                     </button>
-                    <button class="icon-btn" id="deleteAllBtn" style="display:none;" onclick="deleteAll()" title="Hapus Semua">
+                    <button class="icon-btn" id="deleteAllBtn" style="display:none;" onclick="clearCurrentChat()" title="Hapus Chat Ini">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="3 6 5 6 21 6"></polyline>
                             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -127,9 +132,9 @@
                     <p id="welcomeMessage">Silakan login untuk mulai berbicara.</p>
                     <div class="example-prompts">
                         <div class="example-prompt" onclick="setExamplePrompt('Buatkan kode HTML sederhana')"><span>💻</span> Buatkan HTML</div>
-                        <div class="example-prompt" onclick="setExamplePrompt('Jelaskan AI dengan singkat')"><span>🤖</span> Tentang AI</div>
+                        <div class="example-prompt" onclick="setExamplePrompt('Jelaskan rumus fisika')"><span>🔬</span> Rumus Fisika</div>
                         <div class="example-prompt" onclick="setExamplePrompt('Tips belajar coding')"><span>📚</span> Tips Coding</div>
-                        <div class="example-prompt" onclick="setExamplePrompt('Ceritakan tentang Indonesia')"><span>🇮🇩</span> Indonesia</div>
+                        <div class="example-prompt" onclick="setExamplePrompt('Hitung integral ∫x²dx')"><span>🔢</span> Matematika</div>
                     </div>
                 </div>
             </div>

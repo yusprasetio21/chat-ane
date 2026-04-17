@@ -1,79 +1,83 @@
 /**
- * ASISTEN-ANE - Main Application JavaScript
+ * ASISTEN-ANE - Complete Application
+ * 
  * Features:
- * - Syntax Highlighting (Prism.js)
- * - Code Copy Button
- * - MathJax Support (Matematika/Fisika/Biologi)
- * - Supabase Auth & Database
+ * - Quick Chat History (saved to DB)
+ * - Copy Button on every message (user + AI)
+ * - Copy Button on code blocks
+ * - Math formulas (left-aligned)
  */
 
 // =====================================================
-// KONFIGURASI SUPABASE
+// CONFIGURATION
 // =====================================================
 const SUPABASE_URL = 'https://gazznzjhnsislhbdofde.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdhenpuempobnNpc2xoYmRvZmRlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYwNzgwNjQsImV4cCI6MjA5MTY1NDA2NH0.mNPSA2p0wl1p9IezUbbzWKu0x2TnHGNiSbxscfghZfg';
 
+// Special project ID for quick chat history
+const QUICK_CHAT_PROJECT_ID = 'quick-chat-default';
+
 // =====================================================
-// STATE MANAGEMENT
+// STATE
 // =====================================================
 let supabaseClient = null;
 let currentUser = null;
 let currentProject = null;
 let currentSession = null;
-let currentUIMode = 'quick'; // 'quick' or 'project'
+let currentUIMode = 'quick';
 let isLoading = false;
 let projects = [];
+let currentRawContent = {}; // Store raw text for copying
+
+// Performance throttle
+const UPDATE_THROTTLE_MS = 50;
 
 // =====================================================
-// UTILITY FUNCTIONS
+// UTILITIES
 // =====================================================
-
-/**
- * Show toast notification
- */
-function showToast(message, type = 'info', duration = 3500) {
-    const toast = document.getElementById('toast');
-    toast.textContent = message;
-    toast.className = `toast ${type} show`;
-    setTimeout(() => toast.classList.remove('show'), duration);
+function showToast(msg, type = 'info', dur = 3000) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = `toast ${type} show`;
+    setTimeout(() => t.classList.remove('show'), dur);
 }
 
-/**
- * Escape HTML to prevent XSS
- */
 function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    const d = document.createElement('div');
+    d.textContent = text;
+    return d.innerHTML;
 }
 
-/**
- * Hide loading overlay
- */
 function hideLoading() {
-    const overlay = document.getElementById('loadingOverlay');
-    overlay.classList.add('hidden');
-    setTimeout(() => overlay.style.display = 'none', 400);
+    const o = document.getElementById('loadingOverlay');
+    o.classList.add('hidden');
+    setTimeout(() => o.style.display = 'none', 350);
 }
 
-/**
- * Show loading overlay
- */
 function showLoading(text = 'Memuat...') {
-    const overlay = document.getElementById('loadingOverlay');
-    overlay.querySelector('.loading-text').textContent = text;
-    overlay.style.display = 'flex';
-    overlay.classList.remove('hidden');
+    const o = document.getElementById('loadingOverlay');
+    o.querySelector('.loading-text').textContent = text;
+    o.style.display = 'flex';
+    o.classList.remove('hidden');
+}
+
+function debounce(fn, delay) {
+    let timer;
+    return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), delay); };
+}
+
+function generateId() {
+    return crypto.randomUUID();
 }
 
 // =====================================================
-// SUPABASE INITIALIZATION
+// SUPABASE INIT
 // =====================================================
 async function initSupabase() {
     try {
-        console.log('[Init] Initializing Supabase...');
+        console.log('[Init] Connecting...');
         const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2');
-
+        
         supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
             auth: {
                 autoRefreshToken: true,
@@ -83,51 +87,39 @@ async function initSupabase() {
                 flowType: 'pkce'
             }
         });
-        
-        console.log('[Init] Supabase client ready');
+        console.log('[Init] Connected');
         return true;
-    } catch (error) {
-        console.error('[Init] Supabase error:', error);
-        showToast('Gagal menghubungkan server', 'error');
+    } catch (e) {
+        console.error('[Init] Error:', e);
+        showToast('Gagal terhubung ke server', 'error');
         return false;
     }
 }
 
 // =====================================================
-// AUTHENTICATION - Google Sign In
+// AUTHENTICATION
 // =====================================================
 async function signInWithGoogle() {
     if (!supabaseClient) return;
-
+    
     const btn = document.querySelector('.login-btn-google');
     if (btn) {
         btn.disabled = true;
-        btn.innerHTML = `
-            <div style="width:16px;height:16px;border:2px solid #dadce0;border-top-color:#d97706;border-radius:50%;animation:spin 1s linear infinite;display:inline-block;"></div>
-            Menghubungkan...
-        `;
+        btn.innerHTML = '<div style="width:14px;height:14px;border:2px solid #dadce0;border-top-color:#d97706;border-radius:50%;animation:spin 1s linear infinite;display:inline-block;"></div>';
     }
 
     try {
-        const redirectTo = window.location.origin;
-        console.log('[Auth] Redirecting to:', redirectTo);
-
         const { error } = await supabaseClient.auth.signInWithOAuth({
             provider: 'google',
             options: {
-                redirectTo: redirectTo,
+                redirectTo: window.location.origin,
                 queryParams: { access_type: 'offline', prompt: 'consent' }
             }
         });
-
         if (error) throw error;
-    } catch (error) {
-        console.error('[Auth] Sign in error:', error);
-        showToast('Login gagal: ' + error.message, 'error');
-        if (btn) {
-            btn.disabled = false;
-            renderLoginButton();
-        }
+    } catch (e) {
+        showToast('Login gagal: ' + e.message, 'error');
+        if (btn) { btn.disabled = false; renderLoginButton(); }
     }
 }
 
@@ -137,24 +129,18 @@ async function signOut() {
 }
 
 // =====================================================
-// CHECK AUTHENTICATION STATE
+// CHECK AUTH
 // =====================================================
 async function checkAuth() {
-    console.log('[Auth] Checking session...');
-
     try {
-        // Handle OAuth callback
         const hash = window.location.hash;
         if (hash && hash.includes('access_token')) {
-            console.log('[Auth] Detected OAuth callback...');
             showLoading('Menyelesaikan login...');
-            await new Promise(resolve => setTimeout(resolve, 1500));
+            await new Promise(r => setTimeout(r, 1200));
             window.history.replaceState(null, '', window.location.pathname);
         }
 
-        // Get session
         const { data: { session }, error } = await supabaseClient.auth.getSession();
-
         if (error) throw error;
 
         const authEl = document.getElementById('authSection');
@@ -163,40 +149,24 @@ async function checkAuth() {
 
         if (session?.user) {
             currentUser = session.user;
-            console.log('[Auth] Logged in:', currentUser.email);
-
-            // Get user metadata
             const meta = session.user.user_metadata || {};
             const name = meta.full_name || meta.name || currentUser.email.split('@')[0];
             const pic = meta.avatar_url || meta.picture;
 
-            // Render logged in UI
+            // User profile - Nama + Email only
             authEl.innerHTML = `
                 <div class="user-profile">
                     <div class="user-avatar">${pic ? `<img src="${pic}" alt="" referrerpolicy="no-referrer">` : name[0].toUpperCase()}</div>
                     <div class="user-details">
                         <div class="user-name">${escapeHtml(name)}</div>
                         <div class="user-email-display">
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
-                                <polyline points="22,6 12,13 2,6"/>
-                            </svg>
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
                             ${currentUser.email}
                         </div>
-                        <span class="verified-badge">
-                            <svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-                                <polyline points="20 6 9 17 4 12"/>
-                            </svg>
-                            OK
-                        </span>
                     </div>
                 </div>
                 <button class="logout-btn" onclick="signOut()">
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-                        <polyline points="16 17 21 12 16 7"/>
-                        <line x1="21" y1="12" x2="9" y2="12"/>
-                    </svg>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
                     Keluar
                 </button>
             `;
@@ -204,41 +174,29 @@ async function checkAuth() {
             statusDot.className = 'status-dot online';
             statusText.textContent = 'Online';
 
-            // Show mode toggle and input area
             document.getElementById('chatModeSection').style.display = 'flex';
             document.getElementById('deleteAllBtn').style.display = 'flex';
             document.getElementById('inputArea').style.display = 'block';
 
             applyUIMode(currentUIMode);
 
-            if (currentUIMode === 'project') {
-                await loadProjects();
-            }
-
-            updateWelcome(true);
-
         } else {
             currentUser = null;
             renderLoginButton();
-
             statusDot.className = 'status-dot offline';
             statusText.textContent = 'Belum login';
-
             document.getElementById('chatModeSection').style.display = 'none';
             document.getElementById('deleteAllBtn').style.display = 'none';
+            document.getElementById('quickChatHistory').style.display = 'none';
             document.getElementById('projectsList').style.display = 'none';
             updateWelcome(false);
         }
-
-    } catch (error) {
-        console.error('[Auth] Error:', error);
+    } catch (e) {
+        console.error('[Auth]', e);
         showToast('Error autentikasi', 'error');
     }
 }
 
-/**
- * Render login button (not logged in state)
- */
 function renderLoginButton() {
     document.getElementById('authSection').innerHTML = `
         <button class="login-btn-google" onclick="signInWithGoogle()">
@@ -255,7 +213,7 @@ function renderLoginButton() {
 }
 
 // =====================================================
-// UI MODE: Quick Chat vs Project Mode
+// UI MODE SWITCHING
 // =====================================================
 function setChatMode(mode) {
     currentUIMode = mode;
@@ -263,106 +221,162 @@ function setChatMode(mode) {
 }
 
 function applyUIMode(mode) {
-    const quickBtn = document.getElementById('quickChatModeBtn');
-    const projBtn = document.getElementById('projectModeBtn');
-    const newChatBtn = document.getElementById('newChatBtn');
-    const newProjBtn = document.getElementById('newProjectBtn');
-    const projList = document.getElementById('projectsList');
+    const qBtn = document.getElementById('quickChatModeBtn');
+    const pBtn = document.getElementById('projectModeBtn');
+    const nChat = document.getElementById('newChatBtn');
+    const nProj = document.getElementById('newProjectBtn');
+    const qHistory = document.getElementById('quickChatHistory');
+    const pList = document.getElementById('projectsList');
     const badge = document.getElementById('modeBadge');
 
     if (mode === 'quick') {
-        quickBtn.classList.add('active');
-        projBtn.classList.remove('active');
-        newChatBtn.style.display = 'flex';
-        newProjBtn.style.display = 'none';
-        projList.style.display = 'none';
-        badge.className = 'mode-badge quick';
-        badge.textContent = 'Quick Chat';
-        
+        qBtn.classList.add('active'); pBtn.classList.remove('active');
+        nChat.style.display = 'flex'; nProj.style.display = 'none';
+        qHistory.style.display = 'block'; pList.style.display = 'none';
+        badge.className = 'mode-badge quick'; badge.textContent = 'Quick Chat';
         currentProject = null;
-        currentSession = null;
         document.getElementById('currentChatTitle').textContent = 'Asisten-Ane - Quick Chat';
         
-        if (currentUser) updateWelcome(true, 'quick');
-    } else {
-        quickBtn.classList.remove('active');
-        projBtn.classList.add('active');
-        newChatBtn.style.display = 'none';
-        newProjBtn.style.display = 'flex';
-        projList.style.display = 'block';
-        badge.className = 'mode-badge project';
-        badge.textContent = 'Project Mode';
+        // Load quick chat history
+        loadQuickChatHistory();
         
+        if (!currentSession) updateWelcome(true, 'quick');
+    } else {
+        qBtn.classList.remove('active'); pBtn.classList.add('active');
+        nChat.style.display = 'none'; nProj.style.display = 'flex';
+        qHistory.style.display = 'none'; pList.style.display = 'block';
+        badge.className = 'mode-badge project'; badge.textContent = 'Project Mode';
         loadProjects();
         if (!currentProject) updateWelcome(true, 'project');
     }
 }
 
 function startNewQuickChat() {
-    if (!currentUser) {
-        showToast('Silakan login terlebih dahulu', 'warning');
-        return;
-    }
+    if (!currentUser) { showToast('Login dulu!', 'warning'); return; }
     currentProject = null;
-    currentSession = crypto.randomUUID();
+    currentSession = generateId();
+    currentRawContent = {};
     document.getElementById('messagesContainer').innerHTML = '';
-    addMessageToUI('assistant', 'Halo! Aku Asisten-Ane. Ada yang bisa aku bantu? 😊\n\nKamu sedang di mode *Quick Chat* - percakapan tidak tersimpan di project.');
+    addMessageToUI('assistant', 'Halo! Aku Asisten-Ane. Ada yang bisa aku bantu? 😊\n\nMode: *Quick Chat*\n\n💡 Riwayat chat akan otomatis tersimpan.');
 }
 
 // =====================================================
-// DATABASE OPERATIONS
+// QUICK CHAT HISTORY - SAVE & LOAD
 // =====================================================
-async function loadProjects() {
-    if (!currentUser) return [];
+
+/**
+ * Ensure quick chat "project" exists in database
+ */
+async function ensureQuickChatProject() {
+    if (!currentUser) return null;
     
     try {
-        const { data, error } = await supabaseClient
+        // Check if exists
+        const { data } = await supabaseClient
             .from('projects')
-            .select('*')
+            .select('id')
+            .eq('id', QUICK_CHAT_PROJECT_ID)
             .eq('user_id', currentUser.id)
-            .order('created_at', { ascending: false });
+            .single();
+            
+        if (data) return data.id;
+        
+        // Create it
+        const { data: newProj, error } = await supabaseClient
+            .from('projects')
+            .insert({ 
+                id: QUICK_CHAT_PROJECT_ID, 
+                name: '⚡ Quick Chat History', 
+                user_id: currentUser.id 
+            })
+            .select('id')
+            .single();
             
         if (error) throw error;
-        projects = data || [];
-        renderProjects();
-        return projects;
-    } catch (error) {
-        console.error('[DB] Load projects error:', error);
-        return [];
+        return newProj.id;
+    } catch (e) {
+        console.error('[QuickChat] Ensure project error:', e);
+        return QUICK_CHAT_PROJECT_ID;
     }
 }
 
-async function loadSessions(projectId) {
-    if (!currentUser) return [];
+/**
+ * Load quick chat sessions list
+ */
+async function loadQuickChatHistory() {
+    if (!currentUser) return;
     
     try {
+        const projectId = await ensureQuickChatProject();
+        
         const { data } = await supabaseClient
             .from('chat_history')
             .select('session_id, role, content, created_at')
             .eq('project_id', projectId)
             .eq('user_id', currentUser.id)
             .order('created_at', { ascending: false });
-            
+        
+        // Group by session
         const sessions = {};
-        (data || []).forEach(msg => {
-            if (!sessions[msg.session_id]) {
-                sessions[msg.session_id] = {
-                    id: msg.session_id,
-                    last: msg.content.substring(0, 45),
-                    time: msg.created_at
+        (data || []).forEach(m => {
+            if (!sessions[m.session_id]) {
+                sessions[m.session_id] = {
+                    id: m.session_id,
+                    last: m.content.substring(0, 40),
+                    time: m.created_at,
+                    count: 0
                 };
             }
+            sessions[m.session_id].count++;
         });
-        return Object.values(sessions);
-    } catch (error) {
-        return [];
+        
+        renderQuickChatList(Object.values(sessions));
+    } catch (e) {
+        console.error('[QuickChat] Load error:', e);
     }
 }
 
-async function loadHistory(projectId, sessionId) {
-    if (!currentUser) return [];
+/**
+ * Render quick chat history in sidebar
+ */
+function renderQuickChatList(sessions) {
+    const container = document.getElementById('quickChatHistory');
+    container.innerHTML = '<div class="section-divider">Riwayat Chat</div>';
+    
+    if (!sessions.length) {
+        container.innerHTML += `
+            <div class="empty-state">
+                <div class="empty-state-icon">💬</div>
+                <p>Belum ada riwayat.<br>Mulai chat baru!</p>
+            </div>`;
+        return;
+    }
+    
+    // Sort by time descending
+    sessions.sort((a, b) => new Date(b.time) - new Date(a.time));
+    
+    // Show last 20 sessions
+    sessions.slice(0, 20).forEach(s => {
+        const div = document.createElement('div');
+        div.className = 'session-item';
+        div.onclick = () => loadQuickChatSession(s.id);
+        div.innerHTML = `
+            <span class="session-preview">💬 ${escapeHtml(s.last)}...</span>
+            <button class="delete-session" onclick="event.stopPropagation(); deleteQuickChatSession('${s.id}')">✕</button>
+        `;
+        container.appendChild(div);
+    });
+}
+
+/**
+ * Load a specific quick chat session
+ */
+async function loadQuickChatSession(sessionId) {
+    if (!currentUser) return;
     
     try {
+        const projectId = await ensureQuickChatProject();
+        
         const { data } = await supabaseClient
             .from('chat_history')
             .select('role, content')
@@ -370,64 +384,150 @@ async function loadHistory(projectId, sessionId) {
             .eq('session_id', sessionId)
             .eq('user_id', currentUser.id)
             .order('created_at', { ascending: true });
-        return data || [];
-    } catch (error) {
-        return [];
+        
+        currentSession = sessionId;
+        currentRawContent = {};
+        document.getElementById('currentChatTitle').textContent = '⚡ Quick Chat - Riwayat';
+        
+        const container = document.getElementById('messagesContainer');
+        container.innerHTML = '';
+        
+        (data || []).forEach(m => {
+            addMessageToUI(m.role, m.content, m.role === 'user' ? 'msg-user-' + Date.now() : 'msg-ai-' + Date.now());
+        });
+        
+        showToast('Riwayat dimuat', 'success', 1500);
+    } catch (e) {
+        showToast('Gagal memuat riwayat', 'error');
+    }
+}
+
+/**
+ * Delete a quick chat session
+ */
+async function deleteQuickChatSession(sessionId) {
+    if (!confirm('Hapus riwayat chat ini?')) return;
+    
+    try {
+        const projectId = await ensureQuickChatProject();
+        
+        await supabaseClient.from('chat_history')
+            .delete()
+            .eq('project_id', projectId)
+            .eq('session_id', sessionId)
+            .eq('user_id', currentUser.id);
+        
+        loadQuickChatHistory();
+        
+        if (currentSession === sessionId) {
+            startNewQuickChat();
+        }
+        
+        showToast('Riwayat dihapus', 'success');
+    } catch (e) {
+        showToast('Gagal menghapus', 'error');
+    }
+}
+
+/**
+ * Save message to database (for both quick and project mode)
+ */
+async function saveMessageToDB(role, content) {
+    if (!currentUser || !currentSession) return;
+    
+    try {
+        let projectId = currentProject ? currentProject.id : null;
+        
+        // If quick chat mode, use default project
+        if (currentUIMode === 'quick' && !projectId) {
+            projectId = await ensureQuickChatProject();
+        }
+        
+        await supabaseClient.from('chat_history').insert({
+            role: role,
+            content: content,
+            session_id: currentSession,
+            project_id: projectId,
+            user_id: currentUser.id
+        });
+    } catch (e) {
+        console.error('[DB] Save error:', e);
+        // Don't show toast for save errors to not interrupt UX
     }
 }
 
 // =====================================================
-// RENDER PROJECTS LIST
+// PROJECT MODE FUNCTIONS
 // =====================================================
-function renderProjects() {
-    const container = document.getElementById('projectsList');
-    container.innerHTML = '<div class="section-divider">Projects</div>';
+async function loadProjects() {
+    if (!currentUser) return [];
+    try {
+        const { data, error } = await supabaseClient.from('projects')
+            .select('*').eq('user_id', currentUser.id)
+            .neq('id', QUICK_CHAT_PROJECT_ID) // Exclude quick chat project
+            .order('created_at', { ascending: false });
+        if (error) throw error;
+        projects = data || [];
+        renderProjects();
+        return projects;
+    } catch (e) { console.error('[DB]', e); return []; }
+}
 
-    if (projects.length === 0) {
-        container.innerHTML += `
-            <div class="empty-state">
-                <div class="empty-state-icon">📁</div>
-                <p>Belum ada project.<br>Klik "Project Baru" untuk membuat.</p>
-            </div>
-        `;
+async function loadSessions(pid) {
+    if (!currentUser) return [];
+    try {
+        const { data } = await supabaseClient.from('chat_history')
+            .select('session_id, role, content, created_at')
+            .eq('project_id', pid).eq('user_id', currentUser.id)
+            .order('created_at', { ascending: false });
+        const sessions = {};
+        (data || []).forEach(m => {
+            if (!sessions[m.session_id]) sessions[m.session_id] = { id: m.session_id, last: m.content.substring(0, 40), time: m.created_at };
+        });
+        return Object.values(sessions);
+    } catch (e) { return []; }
+}
+
+async function loadHistory(pid, sid) {
+    if (!currentUser) return [];
+    try {
+        const { data } = await supabaseClient.from('chat_history')
+            .select('role, content').eq('project_id', pid).eq('session_id', sid)
+            .eq('user_id', currentUser.id).order('created_at', { ascending: true });
+        return data || [];
+    } catch (e) { return []; }
+}
+
+function renderProjects() {
+    const c = document.getElementById('projectsList');
+    c.innerHTML = '<div class="section-divider">Projects</div>';
+    if (!projects.length) {
+        c.innerHTML += `<div class="empty-state"><div class="empty-state-icon">📁</div><p>Belum ada project.</p></div>`;
         return;
     }
-
-    projects.forEach(project => {
+    projects.forEach(p => {
         const div = document.createElement('div');
         div.className = 'project-item';
         div.innerHTML = `
-            <div class="project-header" onclick="toggleSessions('${project.id}')" ondblclick="selectProjectDirect(${JSON.stringify(project).replace(/"/g, '&quot;')})">
-                <span class="project-name">
-                    <span class="folder-icon">📁</span>
-                    ${escapeHtml(project.name)}
-                </span>
+            <div class="project-header" onclick="toggleSessions('${p.id}')" ondblclick="selectProjectDirect(${JSON.stringify(p).replace(/"/g,'&quot;')})">
+                <span class="project-name"><span class="folder-icon">📁</span>${escapeHtml(p.name)}</span>
                 <div class="project-actions">
-                    <button onclick="event.stopPropagation(); deleteProject('${project.id}')" title="Hapus">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="3 6 5 6 21 6"/>
-                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                        </svg>
+                    <button onclick="event.stopPropagation();deleteProject('${p.id}')" title="Hapus">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                     </button>
                 </div>
             </div>
-            <div class="sessions-list" id="sess-${project.id}"></div>
-        `;
-        container.appendChild(div);
-
-        // Load sessions for this project
-        loadSessions(project.id).then(sessions => {
-            const sessContainer = document.getElementById(`sess-${project.id}`);
-            if (sessContainer && sessions.length > 0) {
-                sessions.forEach(session => {
+            <div class="sessions-list" id="sess-${p.id}"></div>`;
+        c.appendChild(div);
+        loadSessions(p.id).then(sessions => {
+            const sc = document.getElementById(`sess-${p.id}`);
+            if (sc && sessions.length) {
+                sessions.forEach(s => {
                     const sd = document.createElement('div');
                     sd.className = 'session-item';
-                    sd.onclick = () => selectProject(project, session.id);
-                    sd.innerHTML = `
-                        <span class="session-preview">💬 ${escapeHtml(session.last)}</span>
-                        <button class="delete-session" onclick="event.stopPropagation(); deleteSession('${project.id}','${session.id}')">✕</button>
-                    `;
-                    sessContainer.appendChild(sd);
+                    sd.onclick = () => selectProject(p, s.id);
+                    sd.innerHTML = `<span class="session-preview">💬 ${escapeHtml(s.last)}</span><button class="delete-session" onclick="event.stopPropagation();deleteSession('${p.id}','${s.id}')">✕</button>`;
+                    sc.appendChild(sd);
                 });
             }
         });
@@ -439,296 +539,285 @@ function toggleSessions(id) {
     if (el) el.classList.toggle('open');
 }
 
-function selectProjectDirect(project) {
-    selectProject(project);
-}
+function selectProjectDirect(p) { selectProject(p); }
 
 async function selectProject(project) {
     currentProject = project;
     currentSession = null;
+    currentRawContent = {};
     document.getElementById('currentChatTitle').innerHTML = `📁 ${escapeHtml(project.name)}`;
     document.getElementById('messagesContainer').innerHTML = '';
-
     const sessions = await loadSessions(project.id);
-    if (sessions.length > 0) {
+    if (sessions.length) {
         const div = document.createElement('div');
         div.className = 'sessions-container';
-        div.innerHTML = '<h3>Percakapan di project ini:</h3>';
-        
-        sessions.forEach(session => {
+        div.innerHTML = '<h3>Percakapan:</h3>';
+        sessions.forEach(s => {
             const b = document.createElement('button');
             b.className = 'session-history-btn';
-            b.textContent = session.last + '...';
-            b.onclick = () => selectSession(project, session.id);
+            b.textContent = s.last + '...';
+            b.onclick = () => selectSession(project, s.id);
             div.appendChild(b);
         });
-
         const nb = document.createElement('button');
         nb.className = 'new-chat-session-btn';
-        nb.textContent = '+ Chat baru di project ini';
-        nb.onclick = () => {
-            currentSession = crypto.randomUUID();
-            document.getElementById('messagesContainer').innerHTML = '';
-            addMessageToUI('assistant', `Project: **${project.name}**\n\nHalo! Ada yang bisa aku bantu?`);
-        };
+        nb.textContent = '+ Chat baru';
+        nb.onclick = () => { currentSession = generateId(); currentRawContent = {}; document.getElementById('messagesContainer').innerHTML = ''; addMessageToUI('assistant', `Project: **${project.name}**\n\nHalo!`); };
         div.appendChild(nb);
-        
         document.getElementById('messagesContainer').appendChild(div);
     } else {
-        addMessageToUI('assistant', `Project: **${project.name}**\n\nSelamat datang! Mulai percakapan baru.`);
+        addMessageToUI('assistant', `Project: **${project.name}**\n\nMulai percakapan baru.`);
     }
 }
 
-async function selectSession(project, sessionId) {
-    currentProject = project;
-    currentSession = sessionId;
-    document.getElementById('currentChatTitle').innerHTML = `💬 ${escapeHtml(project.name)}`;
-    
-    const history = await loadHistory(project.id, sessionId);
-    const container = document.getElementById('messagesContainer');
-    container.innerHTML = '';
-    
-    history.forEach(msg => addMessageToUI(msg.role, msg.content));
+async function selectSession(p, sid) {
+    currentProject = p;
+    currentSession = sid;
+    currentRawContent = {};
+    document.getElementById('currentChatTitle').innerHTML = `💬 ${escapeHtml(p.name)}`;
+    const hist = await loadHistory(p.id, sid);
+    const c = document.getElementById('messagesContainer');
+    c.innerHTML = '';
+    hist.forEach((m, i) => addMessageToUI(m.role, m.content, `${m.role}-${i}`));
 }
 
-// =====================================================
-// PROJECT CRUD OPERATIONS
-// =====================================================
+// CRUD Operations
 async function createProject() {
     const name = document.getElementById('projectNameInput').value.trim();
-    if (!name) {
-        showToast('Masukkan nama project', 'warning');
-        return;
-    }
-
+    if (!name) { showToast('Masukkan nama', 'warning'); return; }
     try {
-        const { data, error } = await supabaseClient
-            .from('projects')
-            .insert({ name, user_id: currentUser.id })
-            .select()
-            .single();
-
+        const { data, error } = await supabaseClient.from('projects').insert({ name, user_id: currentUser.id }).select().single();
         if (error) throw error;
-
-        closeModal();
-        await loadProjects();
-        selectProject(data);
+        closeModal(); await loadProjects(); selectProject(data);
         showToast('Project dibuat!', 'success');
-    } catch (error) {
-        showToast('Gagal: ' + error.message, 'error');
-    }
+    } catch (e) { showToast('Gagal: ' + e.message, 'error'); }
 }
 
 async function deleteProject(id) {
-    if (!confirm('Hapus project & semua chat?')) return;
-    
+    if (!confirm('Hapus project?')) return;
     await supabaseClient.from('chat_history').delete().eq('project_id', id).eq('user_id', currentUser.id);
     await supabaseClient.from('projects').delete().eq('id', id).eq('user_id', currentUser.id);
-    
     await loadProjects();
-    if (currentProject?.id === id) {
-        currentProject = null;
-        updateWelcome(true, 'project');
-    }
+    if (currentProject?.id === id) { currentProject = null; updateWelcome(true, 'project'); }
 }
 
-async function deleteSession(projectId, sessionId) {
-    if (!confirm('Hapus percakapan?')) return;
-    
-    await supabaseClient.from('chat_history').delete()
-        .eq('project_id', projectId)
-        .eq('session_id', sessionId)
-        .eq('user_id', currentUser.id);
-    
+async function deleteSession(pid, sid) {
+    if (!confirm('Hapus chat?')) return;
+    await supabaseClient.from('chat_history').delete().eq('project_id', pid).eq('session_id', sid).eq('user_id', currentUser.id);
     await loadProjects();
-    if (currentSession === sessionId) {
-        currentSession = null;
-        if (currentProject) selectProject(currentProject);
+    if (currentSession === sid) { currentSession = null; if (currentProject) selectProject(currentProject); }
+}
+
+async function clearCurrentChat() {
+    if (!confirm('Hapus percakapan ini?')) return;
+    if (!currentSession) return;
+    
+    try {
+        let projectId = currentProject ? currentProject.id : QUICK_CHAT_PROJECT_ID;
+        if (currentUIMode === 'quick') projectId = await ensureQuickChatProject();
+        
+        await supabaseClient.from('chat_history')
+            .delete()
+            .eq('project_id', projectId)
+            .eq('session_id', currentSession)
+            .eq('user_id', currentUser.id);
+        
+        if (currentUIMode === 'quick') {
+            startNewQuickChat();
+            loadQuickChatHistory();
+        } else if (currentProject) {
+            selectProject(currentProject);
+        }
+        
+        showToast('Chat dihapus', 'success');
+    } catch (e) {
+        showToast('Gagal menghapus', 'error');
     }
 }
 
 async function deleteAll() {
     if (!confirm('HAPUS SEMUA DATA?')) return;
-    
     await supabaseClient.from('chat_history').delete().eq('user_id', currentUser.id);
     await supabaseClient.from('projects').delete().eq('user_id', currentUser.id);
-    
     await loadProjects();
-    currentProject = null;
-    currentSession = null;
+    currentProject = null; currentSession = null; currentRawContent = {};
     updateWelcome(true, currentUIMode);
 }
 
 // =====================================================
-// MESSAGE FORMATTING WITH CODE HIGHLIGHTING & MATH SUPPORT
+// MESSAGE FORMATTING
 // =====================================================
-
-/**
- * Format message content with:
- * - Code blocks with syntax highlighting (VSCode style)
- * - Copy button for each code block
- * - Math formula support (LaTeX via MathJax)
- * - Bold/italic markdown
- */
 function formatMessage(content) {
     let formatted = escapeHtml(content);
+
+    // Code blocks
+    // Di dalam formatMessage(), cari bagian code block:
+formatted = formatted.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
+    const language = lang || 'plaintext';
+    const cleanCode = code.trim();
+    const bid = 'cb-' + generateId().substr(0, 8);
     
-    // Process code blocks with language support
-    formatted = formatted.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
-        const language = lang || 'plaintext';
-        const cleanCode = code.trim();
-        const blockId = 'code-' + Math.random().toString(36).substr(2, 9);
-        
-        return `
-            <div class="code-block-wrapper" id="${blockId}">
-                <div class="code-block-header">
-                    <span class="code-language">${language}</span>
-                    <button class="code-copy-btn" onclick="copyCode('${blockId}', this)">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                        </svg>
-                        Copy
-                    </button>
-                </div>
-                <pre><code class="language-${language}">${cleanCode}</code></pre>
+    return `
+        <div class="code-block-wrapper" id="${bid}" style="max-width:100%;overflow:hidden;">
+            <div class="code-block-header">
+                <span class="code-language">${language}</span>
+                <button class="code-copy-btn" onclick="copyCode('${bid}',this)">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="9" y="9" width="13" height="13" rx="2"/>
+                        <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+                    </svg>
+                    Copy
+                </button>
             </div>
-        `;
-    });
-    
-    // Process inline code
+            <pre style="max-width:100%;overflow-x:auto;"><code class="language-${language}">${cleanCode}</code></pre>
+        </div>
+    `;
+});
+
+    // Inline code
     formatted = formatted.replace(/`([^`]+)`/g, '<code>$1</code>');
-    
-    // Process math formulas ($...$ or $$...$$)
+
+    // Math - Display (left aligned)
     formatted = formatted.replace(/\$\$([\s\S]+?)\$\$/g, (match, formula) => {
         return `<div class="math-formula">$$${formula}$$</div>`;
     });
+
+    // Math - Inline
     formatted = formatted.replace(/\$([^$]+)\$/g, (match, formula) => {
         return `<span class="math-inline">$${formula}$</span>`;
     });
-    
-    // Process bold and italic
+
+    // Bold / Italic
     formatted = formatted.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
     formatted = formatted.replace(/\*(.*?)\*/g, '<em>$1</em>');
-    
-    // Process line breaks
     formatted = formatted.replace(/\n/g, '<br>');
-    
+
     return formatted;
 }
 
+// =====================================================
+// COPY FUNCTIONS
+// =====================================================
+
 /**
- * Copy code from code block to clipboard
+ * Copy code from code block
  */
-async function copyCode(blockId, button) {
+async function copyCode(blockId, btn) {
     const wrapper = document.getElementById(blockId);
-    const codeElement = wrapper.querySelector('code');
-    const code = codeElement.textContent;
+    const code = wrapper.querySelector('code').textContent;
     
     try {
         await navigator.clipboard.writeText(code);
-        
-        // Update button state
-        button.classList.add('copied');
-        button.innerHTML = `
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="20 6 9 17 4 12"></polyline>
-            </svg>
-            Copied!
-        `;
-        
-        // Reset after 2 seconds
+        btn.classList.add('copied');
+        btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> OK!';
         setTimeout(() => {
-            button.classList.remove('copied');
-            button.innerHTML = `
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                </svg>
-                Copy
-            `;
-        }, 2000);
-        
-        showToast('Code copied!', 'success', 2000);
-    } catch (error) {
-        showToast('Failed to copy', 'error');
+            btn.classList.remove('copied');
+            btn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> Copy';
+        }, 1500);
+        showToast('Code disalin!', 'success', 1500);
+    } catch (e) {
+        showToast('Copy gagal', 'error');
     }
 }
 
 /**
- * Re-highlight code blocks using Prism.js
+ * Copy entire message content (raw text)
  */
-function highlightCodeBlocks() {
-    if (typeof Prism !== 'undefined') {
-        Prism.highlightAllUnder(document.getElementById('messagesContainer'));
+async function copyMessage(messageId, btn) {
+    const rawText = currentRawContent[messageId] || '';
+    
+    if (!rawText) {
+        showToast('Tidak ada teks', 'warning');
+        return;
     }
     
-    // Re-render MathJax formulas
-    if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {
-        MathJax.typesetPromise([document.getElementById('messagesContainer')])
-            .catch(err => console.log('MathJax error:', err));
+    try {
+        await navigator.clipboard.writeText(rawText);
+        btn.classList.add('copied');
+        btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>';
+        
+        setTimeout(() => {
+            btn.classList.remove('copied');
+            btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            Copy`;
+        }, 1500);
+        
+        showToast('Pesan disalin!', 'success', 1500);
+    } catch (e) {
+        showToast('Copy gagal', 'error');
     }
 }
 
-// =====================================================
-// MESSAGE UI FUNCTIONS
-// =====================================================
-function addMessageToUI(role, content) {
-    const container = document.getElementById('messagesContainer');
-    
-    // Remove welcome screen if present
-    if (container.querySelector('.welcome-screen')) {
-        container.innerHTML = '';
+// Render MathJax & Prism (debounced)
+const renderFormattedContent = debounce(() => {
+    if (typeof Prism !== 'undefined') {
+        Prism.highlightAllUnder(document.getElementById('messagesContainer'), false);
     }
+    if (typeof MathJax !== 'undefined' && MathJax.typesetPromise) {
+        const container = document.getElementById('messagesContainer');
+        if (container) MathJax.typesetPromise([container]).catch(err => {});
+    }
+}, UPDATE_THROTTLE_MS);
+
+// =====================================================
+// MESSAGE UI - WITH COPY BUTTON
+// =====================================================
+function addMessageToUI(role, content, messageId = null) {
+    const container = document.getElementById('messagesContainer');
+    const welcome = container.querySelector('#welcomeScreen');
+    if (welcome) welcome.style.display = 'none';
+
+    // Generate unique ID for this message
+    const msgId = messageId || `${role}-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
     
+    // Store raw content for copying
+    currentRawContent[msgId] = content;
+
     const wrapper = document.createElement('div');
     wrapper.className = `message-wrapper ${role}`;
     wrapper.innerHTML = `
+        <button class="msg-copy-btn" onclick="copyMessage('${msgId}', this)" title="Salin pesan">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2"/>
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+            </svg>
+            Copy
+        </button>
         <div class="message ${role}">
             <div class="message-avatar">${role === 'user' ? '👤' : '🤖'}</div>
             <div class="message-content">${formatMessage(content)}</div>
-        </div>
-    `;
-    
+        </div>`;
+
     container.appendChild(wrapper);
-    container.scrollTop = container.scrollHeight;
     
-    // Apply syntax highlighting and math rendering
     requestAnimationFrame(() => {
-        highlightCodeBlocks();
+        container.scrollTop = container.scrollHeight;
+        renderFormattedContent();
     });
-    
+
     return wrapper;
 }
 
 function addLoadingIndicator() {
     const container = document.getElementById('messagesContainer');
-    
-    if (container.querySelector('.welcome-screen')) {
-        container.innerHTML = '';
-    }
-    
+    const welcome = container.querySelector('#welcomeScreen');
+    if (welcome) welcome.style.display = 'none';
+
     const wrapper = document.createElement('div');
     wrapper.className = 'message-wrapper assistant';
     wrapper.id = 'loading-msg';
     wrapper.innerHTML = `
         <div class="message assistant">
             <div class="message-avatar">🤖</div>
-            <div class="message-content">
-                <div class="loading-dots">
-                    <span></span><span></span><span></span>
-                </div>
-            </div>
-        </div>
-    `;
-    
+            <div class="message-content"><div class="loading-dots"><span></span><span></span><span></span></div></div>
+        </div>`;
     container.appendChild(wrapper);
     container.scrollTop = container.scrollHeight;
 }
 
 function removeLoadingIndicator() {
-    const element = document.getElementById('loading-msg');
-    if (element) element.remove();
+    const el = document.getElementById('loading-msg');
+    if (el) el.remove();
 }
 
 // =====================================================
@@ -736,83 +825,63 @@ function removeLoadingIndicator() {
 // =====================================================
 async function sendMessage() {
     const input = document.getElementById('messageInput');
-    const message = input.value.trim();
-    
-    if (!message || isLoading) return;
-    if (!currentUser) {
-        showToast('Silakan login terlebih dahulu', 'warning');
-        return;
-    }
+    const msg = input.value.trim();
+    if (!msg || isLoading) return;
+    if (!currentUser) { showToast('Login dulu!', 'warning'); return; }
 
     input.value = '';
+    input.style.height = 'auto';
     isLoading = true;
     document.getElementById('sendBtn').disabled = true;
 
-    // Add user message
-    addMessageToUI('user', message);
+    // Add user message with unique ID
+    const userMsgId = `user-${Date.now()}`;
+    addMessageToUI('user', msg, userMsgId);
+    
+    // Save user message to DB
+    saveMessageToDB('user', msg);
 
-    // Generate session ID if needed
-    if (!currentSession) {
-        currentSession = crypto.randomUUID();
-    }
-
+    if (!currentSession) currentSession = generateId();
     addLoadingIndicator();
 
     try {
-        // Get access token from Supabase session
         const { data: { session } } = await supabaseClient.auth.getSession();
         const token = session?.access_token;
+        if (!token) throw new Error('Session expired. Login ulang.');
 
-        if (!token) {
-            throw new Error('Token tidak ditemukan. Silakan login ulang.');
-        }
-
-        const projectId = currentProject ? currentProject.id : null;
-        const isGuestMode = (currentUIMode === 'quick');
-        
-        // Build request payload
         const payload = {
-            message: message,
+            message: msg,
             session_id: currentSession,
             stream: true
         };
-        
-        if (!isGuestMode && projectId) {
-            payload.project_id = projectId;
-        }
-        
-        if (isGuestMode) {
-            payload.guest_mode = true;
-        }
 
-        console.log('[Chat] Sending request...');
+        if (currentUIMode !== 'quick' && currentProject) {
+            payload.project_id = currentProject.id;
+        }
+        if (currentUIMode === 'quick') payload.guest_mode = true;
 
-        // Send to API
-        const response = await fetch(`${SUPABASE_URL}/functions/v1/chat-ane`, {
+        const res = await fetch(`${SUPABASE_URL}/functions/v1/chat-ane`, {
             method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-            },
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`API Error ${response.status}: ${errorText}`);
+        if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(`Error ${res.status}: ${errText}`);
         }
 
-        // Handle streaming response
-        const reader = response.body.getReader();
+        const reader = res.body.getReader();
         const decoder = new TextDecoder();
-        let aiResponse = '';
-        let aiElement = null;
+        let aiResp = '';
+        let aiEl = null;
+        const aiMsgId = `ai-${Date.now()}`;
 
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            decoder.decode(value).split('\n').forEach(line => {
+            decoder.decode(value, { stream: true }).split('\n').forEach(line => {
                 if (line.startsWith('data: ')) {
                     const data = line.slice(6);
                     if (data === '[DONE]') return;
@@ -822,32 +891,54 @@ async function sendMessage() {
                         const content = parsed.choices?.[0]?.delta?.content;
                         
                         if (content) {
-                            aiResponse += content;
-                            
-                            if (!aiElement) {
+                            aiResp += content;
+
+                            if (!aiEl) {
                                 removeLoadingIndicator();
-                                aiElement = addMessageToUI('assistant', aiResponse);
-                            } else {
-                                aiElement.querySelector('.message-content').innerHTML = formatMessage(aiResponse);
-                                highlightCodeBlocks();
+                                aiEl = addMessageToUI('assistant', aiResp, aiMsgId);
+                            } else if (aiResp.length % 80 < content.length) {
+                                const contentDiv = aiEl.querySelector('.message-content');
+                                if (contentDiv) {
+                                    contentDiv.innerHTML = formatMessage(aiResp);
+                                    // Update stored raw content
+                                    currentRawContent[aiMsgId] = aiResp;
+                                }
+                                const container = document.getElementById('messagesContainer');
+                                container.scrollTop = container.scrollHeight;
                             }
                         }
-                    } catch (e) {
-                        // Ignore parse errors for incomplete chunks
-                    }
+                    } catch (e) {}
                 }
             });
         }
 
-        // Refresh projects list if in project mode
-        if (currentProject && !isGuestMode) {
+        // Final update
+        if (aiEl) {
+            const contentDiv = aiEl.querySelector('.message-content');
+            if (contentDiv) {
+                contentDiv.innerHTML = formatMessage(aiResp);
+            }
+            currentRawContent[aiMsgId] = aiResp;
+            renderFormattedContent();
+        }
+        
+        // Save AI response to DB
+        if (aiResp) {
+            saveMessageToDB('assistant', aiResp);
+        }
+
+        // Refresh sidebar lists
+        if (currentUIMode === 'quick') {
+            loadQuickChatHistory();
+        } else if (currentProject) {
             await loadProjects();
         }
 
-    } catch (error) {
-        console.error('[Chat] Error:', error);
+    } catch (e) {
+        console.error('[Chat]', e);
         removeLoadingIndicator();
-        addMessageToUI('assistant', 'Maaf, terjadi kesalahan: ' + error.message);
+        const errMsgId = `error-${Date.now()}`;
+        addMessageToUI('assistant', 'Error: ' + e.message, errMsgId);
     } finally {
         isLoading = false;
         document.getElementById('sendBtn').disabled = false;
@@ -855,54 +946,48 @@ async function sendMessage() {
     }
 }
 
-/**
- * Handle keyboard input
- */
-function handleKeydown(event) {
-    if (event.key === 'Enter' && !event.shiftKey) {
-        event.preventDefault();
-        sendMessage();
-    }
+function handleKeydown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 }
 
 // =====================================================
 // WELCOME SCREEN
 // =====================================================
 function updateWelcome(loggedIn, mode = 'quick') {
-    const container = document.getElementById('messagesContainer');
+    const c = document.getElementById('messagesContainer');
     
     if (!loggedIn) {
-        container.innerHTML = `
-            <div class="welcome-screen">
+        c.innerHTML = `
+            <div class="welcome-screen" id="welcomeScreen">
                 <div class="welcome-icon">🤖</div>
                 <h2>Selamat Datang!</h2>
                 <p>Login dengan Google untuk mulai.</p>
                 <div class="example-prompts">
                     <div class="example-prompt" onclick="setExamplePrompt('Hello')"><span>👋</span> Sapa</div>
-                    <div class="example-prompt" onclick="setExamplePrompt('Siapa kamu?')"><span>🤖</span> Tentang kamu</div>
+                    <div class="example-prompt" onclick="setExamplePrompt('Siapa kamu?')"><span>🤖</span> Tentang</div>
                 </div>
             </div>`;
     } else if (mode === 'quick') {
-        container.innerHTML = `
-            <div class="welcome-screen">
+        c.innerHTML = `
+            <div class="welcome-screen" id="welcomeScreen">
                 <div class="welcome-icon">⚡</div>
                 <h2>Quick Chat</h2>
-                <p>Chat cepat tanpa project.</p>
+                <p>Chat cepat dengan riwayat tersimpan.</p>
                 <div class="example-prompts">
-                    <div class="example-prompt" onclick="setExamplePrompt('Buatkan HTML sederhana')"><span>💻</span> HTML</div>
-                    <div class="example-prompt" onclick="setExamplePrompt('Jelaskan AI')"><span>🧠</span> AI</div>
+                    <div class="example-prompt" onclick="setExamplePrompt('Buatkan HTML')"><span>💻</span> HTML</div>
+                    <div class="example-prompt" onclick="setExamplePrompt('Jelaskan rumus fisika')"><span>🔬</span> Fisika</div>
                     <div class="example-prompt" onclick="setExamplePrompt('Tips coding')"><span>💡</span> Tips</div>
-                    <div class="example-prompt" onclick="setExamplePrompt('Hitung integral ∫x²dx')"><span>🔢</span> Matematika</div>
+                    <div class="example-prompt" onclick="setExamplePrompt('Hitung ∫x²dx')"><span>🔢</span> Matematika</div>
                 </div>
             </div>`;
     } else {
-        container.innerHTML = `
-            <div class="welcome-screen">
+        c.innerHTML = `
+            <div class="welcome-screen" id="welcomeScreen">
                 <div class="welcome-icon">📁</div>
                 <h2>Project Mode</h2>
-                <p>Pilih project atau buat baru.</p>
+                <p>Pilih project dari sidebar.</p>
                 <div class="example-prompts">
-                    <div class="example-prompt" onclick="setExamplePrompt('Buatkan API REST')"><span>🔧</span> API</div>
+                    <div class="example-prompt" onclick="setExamplePrompt('Buat API REST')"><span>🔧</span> API</div>
                     <div class="example-prompt" onclick="setExamplePrompt('Database schema')"><span>🗄️</span> DB</div>
                 </div>
             </div>`;
@@ -910,38 +995,26 @@ function updateWelcome(loggedIn, mode = 'quick') {
 }
 
 function setExamplePrompt(prompt) {
-    if (!currentUser) {
-        showToast('Login dulu ya!', 'warning');
-        return;
-    }
+    if (!currentUser) { showToast('Login dulu!', 'warning'); return; }
     document.getElementById('messageInput').value = prompt;
     sendMessage();
 }
 
 // =====================================================
-// MODAL & THEME TOGGLE
+// MODAL & THEME
 // =====================================================
 function showNewProjectModal() {
     document.getElementById('newProjectModal').classList.add('show');
     document.getElementById('projectNameInput').value = '';
-    setTimeout(() => document.getElementById('projectNameInput').focus(), 100);
+    setTimeout(() => document.getElementById('projectNameInput').focus(), 80);
 }
-
-function closeModal() {
-    document.getElementById('newProjectModal').classList.remove('show');
-}
+function closeModal() { document.getElementById('newProjectModal').classList.remove('show'); }
 
 function toggleTheme() {
     document.body.classList.toggle('dark');
     localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light');
-    updateThemeIcon();
-}
-
-function updateThemeIcon() {
     const icon = document.getElementById('themeIcon');
-    const isDark = document.body.classList.contains('dark');
-    
-    icon.innerHTML = isDark
+    icon.innerHTML = document.body.classList.contains('dark')
         ? '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>'
         : '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>';
 }
@@ -951,64 +1024,38 @@ function toggleSidebar() {
     document.getElementById('sidebarOverlay').classList.toggle('show');
 }
 
-// =====================================================
-// EVENT LISTENERS
-// =====================================================
+// Event Listeners
+document.getElementById('newProjectModal').addEventListener('click', e => { if (e.target === e.currentTarget) closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
-// Modal close on outside click
-document.getElementById('newProjectModal').addEventListener('click', (event) => {
-    if (event.target === event.currentTarget) closeModal();
-});
-
-// Modal close on Escape key
-document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') closeModal();
-});
-
-// Textarea auto-resize
 const textarea = document.getElementById('messageInput');
-textarea.addEventListener('input', function () {
+textarea.addEventListener('input', function() {
     this.style.height = 'auto';
-    this.style.height = Math.min(this.scrollHeight, 130) + 'px';
+    this.style.height = Math.min(this.scrollHeight, 120) + 'px';
 });
-
-// Textarea enter key handler
 textarea.addEventListener('keydown', handleKeydown);
 
 // =====================================================
-// INITIALIZATION
+// INIT
 // =====================================================
 async function init() {
-    console.log('[Init] Starting application...');
+    console.log('[Init] Starting...');
+    if (localStorage.getItem('theme') === 'dark') document.body.classList.add('dark');
+    
+    const ok = await initSupabase();
+    if (!ok) { hideLoading(); renderLoginButton(); return; }
 
-    // Load saved theme preference
-    if (localStorage.getItem('theme') === 'dark') {
-        document.body.classList.add('dark');
-    }
-    updateThemeIcon();
-
-    // Initialize Supabase
-    const success = await initSupabase();
-    if (!success) {
-        hideLoading();
-        renderLoginButton();
-        return;
-    }
-
-    // Check authentication
     await checkAuth();
 
-    // Listen for auth changes
-    supabaseClient.auth.onAuthStateChange((event, session) => {
-        console.log('[Auth] State change:', event);
+    supabaseClient.auth.onAuthStateChange((event) => {
+        console.log('[Auth]', event);
         if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
-            setTimeout(() => window.location.reload(), 800);
+            setTimeout(() => window.location.reload(), 700);
         }
     });
 
     hideLoading();
-    console.log('[Init] Application ready!');
+    console.log('[Init] Ready!');
 }
 
-// Start the app
 init();
